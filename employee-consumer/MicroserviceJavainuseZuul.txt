@@ -1,0 +1,267 @@
+MicroserviceJavainuseZuul
+
+Spring Cloud- Netflix Zuul + Eureka Simple Example
+
+We have to provide a unified interface to the services of a system. The indivudual modules/apps should not be visible to the user.
+zuul.routes.producer.url=http://localhost:8092 -> producer.url will route any incoming request with path as /producer to http://localhost:8092
+We are applying 4 filters to all the incoming request to zuul.
+baseUrl = baseUrl + "/producer/employee" -> /producer it will call http://localhost:8092 , /employee ahead of http://localhost:8092 /employee will be appended making http://localhost:8092/employee the producer rest endpoint
+
+
+In this post we implement Netflix Zuul example.
+Zuul is the front door for all requests from devices and web sites to the backend of the Netflix streaming application. 
+As an edge service application, Zuul is built to enable dynamic routing, monitoring, resiliency and security.
+
+What is the Netflix Zuul? Need for it?
+Zuul is a JVM based router and server side load balancer by Netflix. 
+
+It provides a single entry to our system, which allows a browser, mobile app, or other user interface to consume services from multiple hosts without managing cross-origin resource sharing (CORS) and authentication for each one. We can integrate Zuul with other Netflix projects like Hystrix for fault tolerance and Eureka for service discovery, or use it to manage routing rules, filters, and load balancing across your system.
+
+Microservice call without Netflix Zuul
+employee-consumer -> employee-producer
+
+Microservice call with Netflix Zuul
+employee-consumer -> zuul gateway -> employee-producer
+
+Microservice call with Netflix Zuul + Netflix Eureka
+zuul gateway -> register itself to eureka
+employee-consumer -> get the zuul instance from eureka
+employee-consumer -> zuul gateway -> employee-producer
+
+We will be creating four modules as shown in above diagram.
+employee consumer
+employee producer
+Eureka Server
+employee-zuul-service
+
+Of these modules there will be no change in the employee-producer and Eureka Server(MicroserviceJavainuseRegistrationAll) code we had developed in the Netflix Eureka Tutorial.
+We will be creating a new module employee-zuul-service(MicroserviceJavainuseRegistrationAll) and modifying the employee-consumer (MicroserviceJavainuseRegistrationAll) module code developed in the Netflix Eureka Tutorial.
+
+Zuul Gateway
+The pom.xml will be as follows with the zuul dependency
+<dependency>
+	<groupId>org.springframework.cloud</groupId>
+	<artifactId>spring-cloud-starter-zuul</artifactId>
+</dependency>
+
+Next define the following properties in application.properties
+zuul.routes.producer.url=http://localhost:8080
+eureka.client.serviceUrl.defaultZone=http://localhost:8090/eureka
+server.port=8079
+Here zuul.routes.producer.url will route incoming traffic to request for /producer to the employee-producer microservice. Similar routes can be added for other microservices as well.
+Next name the application module in the bootstrap.properties file
+spring.application.name=employee-zuul-service
+
+Next we define the 4 types of filters supported by Zuul in filter package
+pre
+post
+route
+error
+
+Define the ErrorFilter as follows
+public class ErrorFilter extends ZuulFilter {
+
+	@Override
+	public String filterType() {
+		return "error";
+	}
+
+	@Override
+	public int filterOrder() {
+		return 0;
+	}
+
+	@Override
+	public boolean shouldFilter() {
+		return true;
+	}
+
+	@Override
+	public Object run() {
+		System.out.println("Using Route Filter");
+
+		return null;
+	}
+}
+
+Define the PostFilter as follows
+public class PostFilter extends ZuulFilter {
+
+	@Override
+	public String filterType() {
+		return "post";
+	}
+
+	@Override
+	public int filterOrder() {
+		return 0;
+	}
+
+	@Override
+	public boolean shouldFilter() {
+		return true;
+	}
+
+	@Override
+	public Object run() {
+		System.out.println("Using Post Filter");
+
+		return null;
+	}
+}
+
+Define the PreFilter as follows
+public class PreFilter extends ZuulFilter {
+
+	@Override
+	public String filterType() {
+		return "pre";
+	}
+
+	@Override
+	public int filterOrder() {
+		return 0;
+	}
+
+	@Override
+	public boolean shouldFilter() {
+		return true;
+	}
+
+	@Override
+	public Object run() {
+		RequestContext ctx = RequestContext.getCurrentContext();
+		HttpServletRequest request = ctx.getRequest();
+
+		System.out.println(
+				"Request Method : " + request.getMethod() + " Request URL : " + request.getRequestURL().toString());
+
+		return null;
+	}
+}
+
+Define the RouteFilter as follows
+public class RouteFilter extends ZuulFilter {
+
+	@Override
+	public String filterType() {
+		return "route";
+	}
+
+	@Override
+	public int filterOrder() {
+		return 0;
+	}
+
+	@Override
+	public boolean shouldFilter() {
+		return true;
+	}
+
+	@Override
+	public Object run() {
+		System.out.println("Using Route Filter");
+
+		return null;
+	}
+}
+
+Finally we annotate the Spring Boot Main class with @EnableZuulProxy.With this the module will act as a service proxy or gateway.
+Also we create the beans for the filters defined above.
+@SpringBootApplication
+@EnableDiscoveryClient
+@EnableZuulProxy
+public class SpringBootHelloWorldApplication {
+
+	public static void main(String[] args) {
+		SpringApplication.run(SpringBootHelloWorldApplication.class, args);
+	}
+
+	@Bean
+	public PreFilter preFilter() {
+		return new PreFilter();
+	}
+
+	@Bean
+	public PostFilter postFilter() {
+		return new PostFilter();
+	}
+
+	@Bean
+	public ErrorFilter errorFilter() {
+		return new ErrorFilter();
+	}
+
+	@Bean
+	public RouteFilter routeFilter() {
+		return new RouteFilter();
+	}
+}
+
+Code changes for employee-consumer
+
+The changes we make for the consumer module are
+We fetch the Zuul Service instance instead of the the Employee Producer service we were doing earlier.
+
+So in code we have discoveryClient.getInstances("EMPLOYEE-ZUUL-SERVICE") instead of discoveryClient.getInstances("EMPLOYEE-PRODUCER")
+
+Append the URL to be hit with /producer since we have defined so in the applicatio.properties above.
+baseUrl = baseUrl + "/producer/employee"
+
+@Controller
+public class ConsumerControllerClient {
+
+	@Autowired
+	private DiscoveryClient discoveryClient;
+
+	public void getEmployee() throws RestClientException, IOException {
+
+		List<ServiceInstance> instances = discoveryClient.getInstances("EMPLOYEE-ZUUL-SERVICE");
+		ServiceInstance serviceInstance = instances.get(0);
+
+		String baseUrl = serviceInstance.getUri().toString();
+
+		baseUrl = baseUrl + "/producer/employee";
+
+		RestTemplate restTemplate = new RestTemplate();
+		ResponseEntity<String> response = null;
+		try {
+			response = restTemplate.exchange(baseUrl, HttpMethod.GET, getHeaders(), String.class);
+		} catch (Exception ex) {
+			System.out.println(ex);
+		}
+		System.out.println(response.getBody());
+	}
+
+	private static HttpEntity<?> getHeaders() throws IOException {
+		HttpHeaders headers = new HttpHeaders();
+		headers.set("Accept", MediaType.APPLICATION_JSON_VALUE);
+		return new HttpEntity<>(headers);
+	}
+}
+
+As we had done in previous posts- Start the following Spring Boot Applications-
+eureka-server
+employee-producer
+employee-zuul-service
+employee-consumer
+On running the employee-consumer we get the output
+
+The Zuul console output is as follows-
+So the filters defined in the zuul gateway get executed.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
